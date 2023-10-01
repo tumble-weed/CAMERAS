@@ -2,9 +2,10 @@ import copy
 
 import torch
 from torch.nn import functional as F
-
+from RT4KSR.superresolution_for_saliency import SuperResolution
+superresolution = SuperResolution()
 class CAMERAS():
-    def __init__(self, model, targetLayerName, inputResolutions=None):
+    def __init__(self, model, targetLayerName, inputResolutions=None,use_superresolution=False):
         self.model = model
         self.inputResolutions = inputResolutions
 
@@ -16,7 +17,7 @@ class CAMERAS():
         self.featureDict = {}
         self.gradientsDict = {}
         self.targetLayerName = targetLayerName
-
+        self.use_superresolution = use_superresolution
     def _recordActivationsAndGradients(self, inputResolution, image, classOfInterest=None):
         def forward_hook(module, input, output):
             self.featureDict[inputResolution] = (copy.deepcopy(output.clone().detach().cpu()))
@@ -28,7 +29,7 @@ class CAMERAS():
             if name == self.targetLayerName:
                 forwardHandle = module.register_forward_hook(forward_hook)
                 backwardHandle = module.register_backward_hook(backward_hook)
-
+        device = image.device
         logits = self.model(image)
         softMaxScore = F.softmax(logits, dim=1)
         probs, classes = softMaxScore.sort(dim=1, descending=True)
@@ -36,7 +37,7 @@ class CAMERAS():
         if classOfInterest is None:
             ids = classes[:, [0]]
         else:
-            ids = torch.tensor(classOfInterest).unsqueeze(dim=0).unsqueeze(dim=0).cuda()
+            ids = torch.tensor(classOfInterest).unsqueeze(dim=0).unsqueeze(dim=0).to(device)
 
         self.classDict[inputResolution] = ids.clone().detach().item()
         self.probsDict[inputResolution] = probs[0, 0].clone().detach().item()
@@ -51,7 +52,7 @@ class CAMERAS():
         del forward_hook
         del backward_hook
 
-    def _estimateSaliencyMap(self, classOfInterest):
+    def _estimateSaliencyMap(self, classOfInterest,device='cpu'):
         saveResolution = self.inputResolutions[0]
         groundTruthClass = self.classDict[saveResolution]
         meanScaledFeatures = None
@@ -61,8 +62,8 @@ class CAMERAS():
         for resolution in self.inputResolutions:
             if groundTruthClass == self.classDict[resolution] or self.classDict[resolution] == classOfInterest:
                 count += 1
-                upSampledFeatures = F.interpolate(self.featureDict[resolution].cuda(), (saveResolution, saveResolution), mode='bilinear', align_corners=False)
-                upSampledGradients = F.interpolate(self.gradientsDict[resolution].cuda(), (saveResolution, saveResolution), mode='bilinear', align_corners=False)
+                upSampledFeatures = F.interpolate(self.featureDict[resolution].to(device), (saveResolution, saveResolution), mode='bilinear', align_corners=False)
+                upSampledGradients = F.interpolate(self.gradientsDict[resolution].to(device), (saveResolution, saveResolution), mode='bilinear', align_corners=False)
 
                 if meanScaledFeatures is None:
                     meanScaledFeatures = upSampledFeatures
@@ -93,14 +94,25 @@ class CAMERAS():
         return saliencyMap
 
     def run(self, image, classOfInterest=None):
+        device = image.device
+        if self.use_superresolution:
+            superresolution.to(device)
+            superresolution.init_image(image,max(self.inputResolutions))
+
         for index, inputResolution in enumerate(self.inputResolutions):
             if index == 0:
-                upSampledImage = image.cuda()
+                upSampledImage = image#.cuda()
             else:
-                upSampledImage = F.interpolate(image, (inputResolution, inputResolution), mode='bicubic', align_corners=False).cuda()
+                if not self.use_superresolution:
+                    upSampledImage = F.interpolate(image, (inputResolution, inputResolution), mode='bicubic', align_corners=False).to(device)
+                else:
+                    upSampledImage = superresolution.get_image_at_scale(inputResolution)
+                    
+                    print('check range of values and visualize.')
+
 
             self._recordActivationsAndGradients(inputResolution, upSampledImage, classOfInterest=classOfInterest)
 
-        saliencyMap = self._estimateSaliencyMap(classOfInterest=classOfInterest)
+        saliencyMap = self._estimateSaliencyMap(classOfInterest=classOfInterest,device=device)
         return saliencyMap
 

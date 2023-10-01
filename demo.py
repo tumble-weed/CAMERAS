@@ -18,15 +18,17 @@ def loadImage(imagePath, imageSize):
 
 def saveMapWithColorMap(filename, map, image):
     cmap = cm.jet_r(map)[..., :3] * 255.0
-    map = (cmap.astype(np.float) + image.astype(np.float)) / 2
+    map = (cmap.astype(np.float32) + image.astype(np.float32)) / 2
+    print(filename)
     cv2.imwrite(filename, np.uint8(map))
 
 def computeAndSaveMaps():
     model = models.resnet18(pretrained=True)
     model.eval()
-    model = model.cuda()
+    device = 'cuda' if torch.cuda.is_available() else 'cpu' 
+    model = model.to(device)
 
-    cameras = CAMERAS(model, targetLayerName="layer4")
+    cameras = CAMERAS(model, targetLayerName="layer4",use_superresolution=True)
     file = "./cat_dog.png"
 
     image, rawImage = loadImage(file, imageSize=224)
