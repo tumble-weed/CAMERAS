@@ -2,8 +2,8 @@ import copy
 
 import torch
 from torch.nn import functional as F
-from RT4KSR.superresolution_for_saliency import SuperResolution
-superresolution = SuperResolution()
+# from RT4KSR.superresolution_for_saliency import SuperResolution
+# superresolution = SuperResolution()
 class CAMERAS():
     def __init__(self, model, targetLayerName, inputResolutions=None,use_superresolution=False):
         self.model = model
@@ -32,6 +32,11 @@ class CAMERAS():
         device = image.device
         logits = self.model(image)
         softMaxScore = F.softmax(logits, dim=1)
+        if logits.ndim == 4:
+            logits = logits.mean(dim=(-1,-2))
+        if softMaxScore.ndim == 4:
+            softMaxScore = softMaxScore.mean(dim=(-1,-2))
+
         probs, classes = softMaxScore.sort(dim=1, descending=True)
 
         if classOfInterest is None:
@@ -98,13 +103,17 @@ class CAMERAS():
         if self.use_superresolution:
             superresolution.to(device)
             superresolution.init_image(image,max(self.inputResolutions))
-
+        self.shape0 = image.shape[-2:]
         for index, inputResolution in enumerate(self.inputResolutions):
             if index == 0:
                 upSampledImage = image#.cuda()
             else:
                 if not self.use_superresolution:
-                    upSampledImage = F.interpolate(image, (inputResolution, inputResolution), mode='bicubic', align_corners=False).to(device)
+                    min_shape0 = min(self.shape0)
+                    max_shape0 = max(self.shape0)
+                    newShape = (self.shape0[0]/min_shape0)*inputResolution,(self.shape0[1]/min_shape0)*inputResolution
+                    newShape = int(newShape[0]),int(newShape[1])
+                    upSampledImage = F.interpolate(image, newShape, mode='bicubic', align_corners=False).to(device)
                 else:
                     upSampledImage = superresolution.get_image_at_scale(inputResolution)
                     
