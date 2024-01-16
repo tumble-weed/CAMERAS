@@ -92,10 +92,14 @@ class CAMERAS():
         B, C, H, W = saliencyMap.shape
         saliencyMap = saliencyMap.view(B, -1)
         saliencyMap -= saliencyMap.min(dim=1, keepdim=True)[0]
-        saliencyMap /= saliencyMap.max(dim=1, keepdim=True)[0]
+        denom = saliencyMap.max(dim=1, keepdim=True)[0]
+        #assert (saliencyMap[denom==0] == 0).all()
+        saliencyMap = (saliencyMap )/ (denom + (denom == 0).float())
         saliencyMap = saliencyMap.view(B, C, H, W)
 
         saliencyMap = torch.squeeze(torch.squeeze(saliencyMap, dim=0), dim=0)
+        if saliencyMap.isnan().any():
+            dutils.pause()
         return saliencyMap
 
     def run(self, image, classOfInterest=None):
